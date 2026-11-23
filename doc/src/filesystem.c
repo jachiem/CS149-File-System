@@ -9,13 +9,15 @@
 #define ROOT_DIR_SECTOR 0
 #define MAX_NAME_LENGTH 8
 
-/* A directory entry points to the first data sector of a file. */
-struct dir_entry {
-    char type;
-    char name[9];
-    int link;
-    short size;
-};
+
+int curDir = 0;
+
+struct {
+    int isOpen;
+    int dirSec, dirIdx;   // where the file's row is
+    char mode;            // I, O, or U
+    int pos;              // cursor
+} openInfo;
 
 //below is the given code for disk sectors (?)
 /*The first structure represents a directory sector. 
@@ -44,32 +46,74 @@ union block {
     data; 
 };
 
-/* The simulated disk and a small allocation table for all sectors. */
-static union block disk[NUM_OF_SECTORS];
-static int sector_used[NUM_OF_SECTORS];
+/* acts as main disk */
+union block disk[NUM_OF_SECTORS];
+
+
+struct nodeType {
+    int info; //free box
+    struct nodeType *link; //next item 
+};
+
+//pointer for top of sector
+struct nodeType *freeList = NULL; 
+
+//make a list of 99 EMPTY blocks.
+void buildList(void){
+    for (int s=99; s>=1; s--){
+        struct nodeType *n = malloc(sizeof *n); 
+        n->info = s;
+        n->link = freeList;
+        freeList = n;
+    }
+}
+
+//remove a blocks from EMPTY when it's being used
+int Remove(void){
+    if(freeList ==NULL) return -1;
+    struct nodeType *n = freeList;
+    int s = n->info; 
+    freeList = n->link; 
+    free(n);
+    return s; 
+}
+
+
+//insert puts empty blocks back after delete 
+void Insert(int s){
+    struct nodeType *n = malloc(sizeof *n);
+    n->info = s;
+    n->link = freeList; 
+    freeList = n; 
+}
+
+//blanket folder in box s 
+void initDir(int s)          
+{
+    memset(&disk[s], 0, sizeof disk[s]);
+    disk[s].directory.back = -1;
+    disk[s].directory.frwd = 0;
+    disk[s].directory.free = 25;  //25 free slots
+    for (int i = 0; i < 25; i++) {
+        disk[s].directory.dir[i].type = 'F';
+        disk[s].directory.dir[i].link = 0;
+    }
+}
+
+
 
 static void initializeDisk(void)
 {
-    memset(disk, 0, sizeof(disk));
-    memset(sector_used, 0, sizeof(sector_used));
-
-    /* Sector 0 is always the root directory. */
-    sector_used[ROOT_DIR_SECTOR] = 1;
-    disk[ROOT_DIR_SECTOR].directory.back = -1;
-    disk[ROOT_DIR_SECTOR].directory.frwd = -1;
-    disk[ROOT_DIR_SECTOR].directory.free = ENTRIES_PER_DIR;
-
-    for (int i = 0; i < ENTRIES_PER_DIR; i++) {
-        disk[ROOT_DIR_SECTOR].directory.dir[i].type = '\0';
-        disk[ROOT_DIR_SECTOR].directory.dir[i].link = -1;
-        disk[ROOT_DIR_SECTOR].directory.dir[i].size = 0;
-    }
+    initDir(0);                       
+    disk[0].directory.back = -1;
+    disk[0].directory.frwd = -1;
+    buildList();                     
 }
 
 static int findFreeDirectoryEntry(void)
 {
     for (int i = 0; i < ENTRIES_PER_DIR; i++) {
-        if (disk[ROOT_DIR_SECTOR].directory.dir[i].type == '\0') {
+        if (disk[ROOT_DIR_SECTOR].directory.dir[i].type == 'F') {
             return i;
         }
     }
@@ -79,7 +123,7 @@ static int findFreeDirectoryEntry(void)
 static int findDirectoryEntry(const char name[])
 {
     for (int i = 0; i < ENTRIES_PER_DIR; i++) {
-        if (disk[ROOT_DIR_SECTOR].directory.dir[i].type != '\0' &&
+        if (disk[ROOT_DIR_SECTOR].directory.dir[i].type != 'F' &&
             strcmp(disk[ROOT_DIR_SECTOR].directory.dir[i].name, name) == 0) {
             return i;
         }
@@ -87,21 +131,19 @@ static int findDirectoryEntry(const char name[])
     return -1;
 }
 
-static int findFreeSector(void)
-{
-    for (int i = ROOT_DIR_SECTOR + 1; i < NUM_OF_SECTORS; i++) {
-        if (!sector_used[i]) {
-            return i;
-        }
+
+
+
+/* --------------------------------------- FILE FUNCTIONS ---------------------------------------*/
+void destroyList(void){
+    while (freeList != NULL) {
+        struct nodeType *n = freeList;
+        freeList = freeList->link;
+        free(n);
     }
-    return -1;
 }
 
-/*
- * Create an empty file.  The supplied type is stored in the directory entry;
- * use 'f' for an ordinary file.  This version allocates its first data sector
- * immediately, which makes the entry ready for later write operations.
- */
+
 void createFile(char type, const char name[])
 {
     if (name == NULL || name[0] == '\0') {
@@ -124,27 +166,27 @@ void createFile(char type, const char name[])
         return;
     }
 
-    int data_sector = findFreeSector();
+    int data_sector = Remove();
     if (data_sector == -1) {
         fprintf(stderr, "Error: disk is full.\n");
         return;
     }
 
-    struct dir_entry *entry = &disk[ROOT_DIR_SECTOR].directory.dir[dir_index];
+    disk[0].directory.dir[dir_index].type = type;
+    strcpy(disk[0].directory.dir[dir_index].name, name);
+    disk[0].directory.dir[dir_index].link = data_sector;
+    disk[0].directory.dir[dir_index].size = 0;
 
-    entry->type = type;
-  strcpy(entry->name, name);
-    entry->link = data_sector;
-    entry->size = 0;
 
-    sector_used[data_sector] = 1;
-    disk[data_sector].data.backf = -1;
-    disk[data_sector].data.frwdf = -1;
+    disk[data_sector].data.backf = 0;
+    disk[data_sector].data.frwdf = 0;
     memset(disk[data_sector].data.userdata, 0, DATA_SIZE);
     disk[ROOT_DIR_SECTOR].directory.free--;
 
     printf("Created file '%s' in data sector %d.\n", name, data_sector);
 }
+
+
 
 void deleteFile(const char name[])
 {
@@ -154,25 +196,29 @@ void deleteFile(const char name[])
         return;
     }
 int sector = disk[ROOT_DIR_SECTOR].directory.dir[dir_index].link;
-    while (sector != -1) {
+    while (sector != 0) {
         if (sector <= ROOT_DIR_SECTOR || sector >= NUM_OF_SECTORS) {
             fprintf(stderr, "Error: invalid data-sector link for '%s'.\n", name);
             break;
         }
 
         int next_sector = disk[sector].data.frwdf;
-        sector_used[sector] = 0;
+        Insert(sector);
         memset(&disk[sector], 0, sizeof(disk[sector]));
         sector = next_sector;
     }
 
     memset(&disk[ROOT_DIR_SECTOR].directory.dir[dir_index], 0,
            sizeof(disk[ROOT_DIR_SECTOR].directory.dir[dir_index]));
-    disk[ROOT_DIR_SECTOR].directory.dir[dir_index].link = -1;
+    disk[ROOT_DIR_SECTOR].directory.dir[dir_index].type = 'F';
+    disk[ROOT_DIR_SECTOR].directory.dir[dir_index].link = 0;
     disk[ROOT_DIR_SECTOR].directory.free++;
 
     printf("Deleted file '%s'.\n", name);
 }
+
+
+
 void listFiles(void)
 {
     int found = 0;
@@ -181,29 +227,31 @@ void listFiles(void)
     printf("----  --------  ----  ------------\n");
 
     for (int i = 0; i < ENTRIES_PER_DIR; i++) {
-        const struct dir_entry *entry =
-            &disk[ROOT_DIR_SECTOR].directory.dir[i];
 
-        if (entry->type != '\0') {
+        if (disk[0].directory.dir[i].type != 'F') {
             printf("%-4c  %-8s  %-4d  %d\n",
-                   entry->type, entry->name, entry->size, entry->link);
+                   disk[0].directory.dir[i].type, disk[0].directory.dir[i].name,
+                   disk[0].directory.dir[i].size, disk[0].directory.dir[i].link);
             found = 1;
         }
     }
 
     if (!found) {
         printf("(directory is empty)\n");
+    
     }
 }
 
 
+void Root(){
 
-
-
-
-//File stuff
+}
 
 void openFile(){
+
+}
+
+void closeFile(){
 
 }
 
@@ -215,17 +263,37 @@ void writeFile(){
 
 }
 
+void seekFile(){
+
+}
+
+void changeDir(){
+
+}
+
+
+
 //TODO: Main command loop (should be at the bottom)
 int main(int argc, char *argv[]) {
+    if (sizeof(disk[0].directory.dir[0]) != 20 || sizeof(union block) != 512) {
+        printf("Error: structure sizes are wrong\n");
+        return 1;
+    }
+
+    initializeDisk();
+
     printf("Enter an input to use our file system! It is case sensitive.\nFor info on commands, type INFO and enter. To exit, type EXIT and enter.\n");
     
     char userInput[510]; // to store input that is not the commands. since data max is 504... 510 should be enough?
-    char userCommand[10];
+    char userCommand[20];
 
     while(1){
         printf("CS149FS> ");
 
-        fgets(userInput, sizeof(userInput), stdin);
+        if (fgets(userInput, sizeof(userInput), stdin) == NULL) {
+            destroyList();
+            break;
+        }
         userInput[strcspn(userInput, "\n")] = '\0';
         sscanf(userInput, "%19s", userCommand);
 
@@ -235,6 +303,7 @@ int main(int argc, char *argv[]) {
             printf("  CREATE D \'filename\' - allocates and initializes a directory sector and adds an entry of type D to the current directory.\n");
             // will add more stuff later
         } else if (strcmp(userCommand, "EXIT") == 0){
+            destroyList();
             break;
         } else if (strcmp(userCommand, "CREATE") == 0){
             printf("Creating file...\n");
@@ -244,38 +313,32 @@ int main(int argc, char *argv[]) {
             //deleteFile();
         } else if (strcmp(userCommand, "ROOT") == 0){
             printf("Moving to root.\n");
-
+            //Root()
         } else if (strcmp(userCommand, "OPEN") == 0){
             printf("Opening file...\n");
-
+            //openFile()
         } else if (strcmp(userCommand, "CLOSE") == 0){
             printf("Closing file...\n");
-
+            //closeFile()
         } else if (strcmp(userCommand, "READ") == 0){
             printf("Reading file...\n");
-
+            //readFile()
         } else if (strcmp(userCommand, "WRITE") == 0){
             printf("Writing to file...\n");
-
+            //writeFile()
         } else if (strcmp(userCommand, "SEEK") == 0){
             printf("Looking for file...\n");
-
-        } else if (strcmp(userCommand, "CLOSE") == 0){
-            printf("Closing file...\n");
-
+            //seekFile()
         } else if (strcmp(userCommand, "DIR") == 0){
             printf("this does something yeah\n");
-
+            //listFiles()
         } else if (strcmp(userCommand, "CD") == 0){
             printf("Moving directories.\n");
-
-        } else {
-            printf("Please enter a valid command. (Case sensitive)");
+            //changeDir()
+        }
+         else {
+            printf("Please enter a valid command. (Case sensitive)\n");
         }
         
     }
-    
-    
-
-
 }
