@@ -1,6 +1,5 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
 #include <string.h>
 
 #define NUM_OF_SECTORS 100 
@@ -25,9 +24,9 @@ of a regular file. The sector array must be declared
 after the union definition.*/
 union block { 
     struct { 
-        int back; 
-        int frwd; 
-        int free; 
+        int back; // link to the previous sector
+        int frwd; // the link to the next sector
+        int free; // unused 
         struct { 
             char type; 
             char name[9]; 
@@ -40,7 +39,7 @@ union block {
     struct { 
         int backf; 
         int frwdf; 
-        char userdata[504]; 
+        char userdata[DATA_SIZE]; 
     } 
     data; 
 };
@@ -203,15 +202,80 @@ void listFiles(void)
 
 
 //File stuff
-void createFile(char type, const char name[]) {
+
+void openFile(){
+
+}
+
+void readFile(){
     
 }
 
-void deleteFile(const char name[]) {
-    
+void writeFile(){
+
 }
 
 //TODO: Main command loop (should be at the bottom)
 int main(int argc, char *argv[]) {
+    printf("Enter an input to use our file system! It is case sensitive.\nFor info on commands, type INFO and enter. To exit, type EXIT and enter.\n");
+    
+    char userInput[510]; // to store input that is not the commands. since data max is 504... 510 should be enough?
+    char userCommand[10];
+
+    while(1){
+        printf("CS149FS> ");
+
+        fgets(userInput, sizeof(userInput), stdin);
+        userInput[strcspn(userInput, "\n")] = '\0';
+        sscanf(userInput, "%19s", userCommand);
+
+        if (strcmp(userCommand, "INFO") == 0){
+            printf("Commands are:\n");
+            printf("  CREATE U \'filename\' - creates an empty regular file and adds its entry to the current directory.\n");
+            printf("  CREATE D \'filename\' - allocates and initializes a directory sector and adds an entry of type D to the current directory.\n");
+            // will add more stuff later
+        } else if (strcmp(userCommand, "EXIT") == 0){
+            break;
+        } else if (strcmp(userCommand, "CREATE") == 0){
+            printf("Creating file...\n");
+            //createFile();
+        } else if (strcmp(userCommand, "DELETE") == 0){
+            printf("Deleting file...\n");
+            //deleteFile();
+        } else if (strcmp(userCommand, "ROOT") == 0){
+            printf("Moving to root.\n");
+
+        } else if (strcmp(userCommand, "OPEN") == 0){
+            printf("Opening file...\n");
+
+        } else if (strcmp(userCommand, "CLOSE") == 0){
+            printf("Closing file...\n");
+
+        } else if (strcmp(userCommand, "READ") == 0){
+            printf("Reading file...\n");
+
+        } else if (strcmp(userCommand, "WRITE") == 0){
+            printf("Writing to file...\n");
+
+        } else if (strcmp(userCommand, "SEEK") == 0){
+            printf("Looking for file...\n");
+
+        } else if (strcmp(userCommand, "CLOSE") == 0){
+            printf("Closing file...\n");
+
+        } else if (strcmp(userCommand, "DIR") == 0){
+            printf("this does something yeah\n");
+
+        } else if (strcmp(userCommand, "CD") == 0){
+            printf("Moving directories.\n");
+
+        } else {
+            printf("Please enter a valid command. (Case sensitive)");
+        }
+        
+    }
+    
+    
+
 
 }
